@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Maybe Real City — a tiny town on the internet</title>
+<meta name="description" content="Maybe Real City is a tiny low-poly town where every visitor gets a house with their name on it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div id="loader" role="status" aria-label="Loading Maybe Real City">
+  <div class="loader-card">
+    <svg id="load-svg" viewBox="0 0 220 150" width="220" height="150" aria-hidden="true">
+      <ellipse cx="110" cy="132" rx="92" ry="12" fill="#efe6d4"/>
+      <rect x="60" y="86" width="64" height="46" rx="3" fill="#fff6e9" stroke="#2b3550" stroke-width="4"/>
+      <polygon points="52,90 92,58 132,90" fill="#e2725b" stroke="#2b3550" stroke-width="4" stroke-linejoin="round"/>
+      <rect x="84" y="106" width="16" height="26" rx="2" fill="#2b3550"/>
+      <rect x="66" y="94" width="12" height="12" fill="#bfe3ef" stroke="#2b3550" stroke-width="3"/>
+      <rect x="102" y="94" width="12" height="12" fill="#bfe3ef" stroke="#2b3550" stroke-width="3"/>
+      <rect x="150" y="20" width="8" height="112" fill="#e8b04b" stroke="#2b3550" stroke-width="4"/>
+      <rect x="150" y="24" width="52" height="8" fill="#e8b04b" stroke="#2b3550" stroke-width="4"/>
+      <line x1="202" y1="32" x2="202" y2="66" stroke="#2b3550" stroke-width="3"/>
+      <rect x="192" y="66" width="20" height="14" rx="2" fill="#9b7ede" stroke="#2b3550" stroke-width="3"/>
+      <circle cx="170" cy="48" r="10" fill="#fff6e9" stroke="#2b3550" stroke-width="3"/>
+      <circle cx="170" cy="48" r="3.5" fill="#2b3550"/>
+    </svg>
+    <h1 class="wordmark">MAYBERC</h1>
+    <p class="loader-sub">Raising the rooftops…</p>
+    <div class="load-bar"><div id="load-bar-fill"></div></div>
+    <p id="load-status" class="loader-status">Waking up the town…</p>
+  </div>
+</div>
+
+<!-- WebGL fallback -->
+<div id="fallback" hidden>
+  <div class="fallback-card">
+    <h2>Oh no, the town can't load</h2>
+    <p id="fallback-msg">Your browser or device doesn't support WebGL, which Maybe Real City needs for its 3D town. Try a recent version of Chrome, Edge, Firefox, or Safari with hardware acceleration turned on.</p>
+  </div>
+</div>
+
+<!-- 3D canvas mount -->
+<div id="scene" aria-hidden="true"></div>
+
+<!-- HUD -->
+<div id="hud" hidden>
+  <div id="stats" class="pill-row">
+    <div class="pill" title="Homes standing in town"><span class="pill-ico">⌂</span><span id="stat-houses">–</span><span class="pill-lbl">Homes</span></div>
+    <div class="pill" title="Neighbors living here"><span class="pill-ico">☺</span><span id="stat-residents">–</span><span class="pill-lbl">Neighbors</span></div>
+    <div class="pill" title="Days since the town opened"><span class="pill-ico">☀</span><span>Day</span><span id="stat-day">–</span></div>
+    <div class="pill" title="New neighbors today"><span class="pill-ico">✦</span><span id="stat-new">–</span><span class="pill-lbl">New today</span></div>
+  </div>
+
+  <div id="top-right">
+    <button id="coin-pill" class="pill coin" title="Town Coins — open the Treasury"><span class="pill-ico">◉</span><span id="coin-count">0</span></button>
+    <button id="gear-btn" class="icon-btn" title="Town Hall" aria-label="Open Town Hall">⚙</button>
+  </div>
+
+  <div id="minimap" title="Districts — tap to fly">
+    <svg viewBox="0 0 120 120" width="120" height="120" role="group" aria-label="District map">
+      <rect x="0" y="0" width="120" height="120" rx="18" fill="#fffdf6" stroke="#2b3550" stroke-width="3"/>
+      <circle cx="60" cy="60" r="26" fill="none" stroke="#8a93a8" stroke-width="5"/>
+      <rect x="48" y="48" width="24" height="24" rx="3" fill="#e8b04b" stroke="#2b3550" stroke-width="2.5" data-d="downtown"/>
+      <path d="M96 22 L104 22 L104 98 L96 98 Z" fill="#7ec8e3" stroke="#2b3550" stroke-width="2" data-d="riverside"/>
+      <rect x="8" y="38" width="24" height="44" rx="3" fill="#9b7ede" stroke="#2b3550" stroke-width="2.5" data-d="oldtown"/>
+      <circle cx="60" cy="60" r="34" fill="none" stroke="#e2725b" stroke-width="6" stroke-dasharray="6 5" data-d="ringroad"/>
+      <circle cx="60" cy="60" r="4.5" fill="#2b3550" data-d="downtown"/>
+      <text x="60" y="112" text-anchor="middle" font-size="8.5" font-weight="800" fill="#2b3550" font-family="Nunito,sans-serif">DISTRICTS</text>
+    </svg>
+  </div>
+
+  <form id="search-pill" autocomplete="off">
+    <span class="search-ico">⌕</span>
+    <input id="search-input" type="text" placeholder="Find my house…" maxlength="20" aria-label="Find my house">
+    <button type="submit" id="search-btn">Find</button>
+  </form>
+</div>
+
+<!-- Scrim + dialogs -->
+<div id="scrim" hidden></div>
+
+<section id="dlg-townhall" class="dialog" hidden role="dialog" aria-label="Town Hall">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2>Town Hall</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body">
+      <h3 class="micro">Neighbor desk</h3>
+      <div class="btn-grid">
+        <button id="th-treasury" class="desk-btn">◉ Treasury &amp; quests</button>
+        <button id="th-upgrade" class="desk-btn">⬆ Upgrade my home</button>
+        <button id="th-look" class="desk-btn">✎ Fresh look</button>
+        <button id="th-collection" class="desk-btn">▤ House collection</button>
+      </div>
+      <h3 class="micro">Landmarks — fly there</h3>
+      <div id="th-landmarks" class="btn-grid"></div>
+      <h3 class="micro">Display</h3>
+      <div class="seg" id="gfx-seg" role="group" aria-label="Graphics quality">
+        <button data-gfx="auto" class="seg-btn">Auto</button>
+        <button data-gfx="high" class="seg-btn">High</button>
+        <button data-gfx="low" class="seg-btn">Low</button>
+      </div>
+      <label class="toggle-row"><input type="checkbox" id="cine-toggle"><span>Cinematic drift <small>(slow auto-rotate)</small></span></label>
+      <h3 class="micro">New on the block</h3>
+      <ul id="th-feed" class="feed"></ul>
+      <div class="dlg-foot">
+        <button class="linklike" data-open="about">About</button> ·
+        <button class="linklike" data-open="privacy">Privacy</button>
+        <span class="credit">Made by MeowSamOP DZN</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="dlg-house" class="dialog" hidden role="dialog" aria-label="House">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2 id="house-name">–</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body">
+      <p class="house-sub"><span id="house-district">–</span> · <span id="house-address">–</span></p>
+      <div class="value-row">
+        <span>Home value</span>
+        <strong>◉ <span id="house-value">0</span></strong>
+        <button id="value-toggle" class="linklike" aria-expanded="false">breakdown ▾</button>
+      </div>
+      <ul id="value-breakdown" class="breakdown" hidden></ul>
+      <div id="house-owner-note" class="note" hidden>This is your home. Looking sharp.</div>
+      <div class="btn-grid" id="house-actions">
+        <button id="ha-share" class="desk-btn">⤴ Share</button>
+        <button id="ha-flag" class="desk-btn">⚑ Fly my flag</button>
+        <button id="ha-upgrade" class="desk-btn">⬆ Upgrade</button>
+        <button id="ha-look" class="desk-btn">✎ Fresh look</button>
+        <button id="ha-remove" class="desk-btn danger" hidden>✕ Remove my name</button>
+      </div>
+      <p id="house-hint" class="hint"></p>
+    </div>
+  </div>
+</section>
+
+<section id="dlg-quests" class="dialog" hidden role="dialog" aria-label="Treasury and quests">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2>Treasury</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body">
+      <p class="treasury-balance">Balance: <strong>◉ <span id="quest-coins">0</span></strong> <small>quests refresh daily</small></p>
+      <ul id="quest-list" class="quests"></ul>
+    </div>
+  </div>
+</section>
+
+<section id="dlg-find" class="dialog" hidden role="dialog" aria-label="No house found">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2>No home yet</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body">
+      <p id="find-text">There's no house for <strong id="find-name">@—</strong> yet. Claim an open plot and the town will raise a brand-new home with your name on the door.</p>
+      <input id="find-handle-input" type="text" maxlength="20" placeholder="pick a handle, e.g. sunnyfox" aria-label="Your handle" style="display:none">
+      <div class="btn-grid">
+        <button id="find-claim" class="desk-btn primary">⌂ Claim a plot &amp; build</button>
+        <button class="desk-btn" data-close>Keep exploring</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="dlg-collection" class="dialog" hidden role="dialog" aria-label="House collection">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2>House collection</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body">
+      <p class="hint">Every home claimed by visitors, newest first.</p>
+      <ul id="collection-list" class="feed"></ul>
+    </div>
+  </div>
+</section>
+
+<section id="dlg-about" class="dialog" hidden role="dialog" aria-label="About">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2>About Maybe Real City</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body prose">
+      <p>Maybe Real City is a tiny pretend town that lives in your browser. Wander the districts, peek at the neighbors, and claim a little house with your name on it.</p>
+      <p><strong>This is a demo.</strong> There are no accounts, no sign-ups, and no servers. Every house you claim, every coin you earn, and every fresh coat of paint is stored only in this browser, on this device. Clear your browser data and the town forgets you — the pre-built neighbors stay, because they were born with the town.</p>
+      <p>No tracking, no analytics, no ads. Just rooftops.</p>
+      <p class="credit">Made by MeowSamOP DZN</p>
+    </div>
+  </div>
+</section>
+
+<section id="dlg-privacy" class="dialog" hidden role="dialog" aria-label="Privacy">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2>Privacy, plainly</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body prose">
+      <p><strong>We collect nothing.</strong> Maybe Real City has no backend, no database, and no tracking scripts. Nothing you type or click ever leaves your device.</p>
+      <p><strong>What stays in your browser:</strong> the names you claim houses under, your Town Coin balance, quest progress, display settings, and home upgrades. This lives in your browser's local storage and never travels anywhere.</p>
+      <p><strong>What leaves your device:</strong> the 3D library and font load from public CDNs (unpkg and Google Fonts), which is how the page renders at all. That's the whole list.</p>
+      <p>Want a clean slate? Clear this site's data in your browser settings and you'll arrive as a brand-new visitor.</p>
+    </div>
+  </div>
+</section>
+
+<div id="toast" role="status" aria-live="polite" hidden></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
