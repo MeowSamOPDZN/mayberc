@@ -1,6 +1,10 @@
 # Maybe Real City
 
-A tiny low-poly 3D internet town where every visitor gets a house with their name on it.
+A tiny low-poly 3D internet town. Downtown has a grand plaza with the Town Hall,
+Town Bank, and Wishing Fountain, ringed by a loop road with driving cars. Four
+neighborhoods (Northgate, Riverside, Old Town, Hillview) hold 120 vacant plots with
+FOR RENT signs — visitors join by picking a name and the town raises a home for them.
+The Founder's Mansion east of the plaza belongs to @hard8k.edt.
 Demo version — no backend, everything is stored in the browser's localStorage.
 
 ## Run it
@@ -20,7 +24,7 @@ Note: ES modules + the import map require `http(s)` — opening `index.html` via
 - `index.html` — page shell, HUD, dialogs, import map (Three.js 0.160.0 from unpkg)
 - `styles.css` — all styles (cream cards, navy ink, Nunito)
 - `js/main.js` — boot, loader, render loop, click-vs-drag picking
-- `js/build.mjs` — Three.js town construction (instanced houses/towers/trees, landmarks, cars, fountain, confetti)
+- `js/build.mjs` — Three.js town construction (plaza, ring road, landmarks, mansion, rent signs, cars, fountain, confetti)
 - `js/layout.mjs` — pure deterministic city generator (seeded RNG, no DOM/three — unit-testable)
 - `js/camera.mjs` — custom orbit controls + fly-to (no addons)
 - `js/ui.mjs` — HUD, Town Hall hub, house panel, quests, hash routing
