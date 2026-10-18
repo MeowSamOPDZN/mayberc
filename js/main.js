@@ -68,10 +68,13 @@ async function boot() {
     const ui = initUI({ town, cam, renderer, layout, store });
 
     // click (not drag) -> pick something in the town
-    let downX = 0, downY = 0;
-    renderer.domElement.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; });
+    let downX = 0, downY = 0, downActive = false;
+    renderer.domElement.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; downActive = true; });
+    renderer.domElement.addEventListener('pointercancel', () => { downActive = false; });
     renderer.domElement.addEventListener('pointerup', e => {
-      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 7) return;
+      if (!downActive) return;
+      downActive = false;
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 10) return;
       const rect = renderer.domElement.getBoundingClientRect();
       const hit = town.pick(e.clientX, e.clientY, camera, rect);
       if (!hit) return;
