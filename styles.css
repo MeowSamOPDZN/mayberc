@@ -226,12 +226,15 @@ html, body {
 }
 #toast[hidden] { display: none; }
 
-#find-handle-input {
-  width: 100%; margin: 4px 0 12px; padding: 10px 14px;
+#welcome-handle {
+  width: 100%; margin: 4px 0 4px; padding: 10px 14px;
   border: 3px solid var(--ink); border-radius: 14px;
   font: inherit; font-weight: 800; font-size: 15px; color: var(--ink); background: #fff;
 }
-#find-handle-input::placeholder { color: #9aa2b8; }
+#welcome-handle::placeholder { color: #9aa2b8; }
+.welcome-sub { font-size: 14.5px; font-weight: 700; margin: 0 0 6px; }
+.welcome-error { color: var(--coral-deep); font-weight: 800; min-height: 18px; }
+.dist-btn.active { background: var(--ink); color: var(--cream); }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 640px) {
