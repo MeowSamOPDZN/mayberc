@@ -67,12 +67,12 @@
   <div id="minimap" title="Districts — tap to fly">
     <svg viewBox="0 0 120 120" width="120" height="120" role="group" aria-label="District map">
       <rect x="0" y="0" width="120" height="120" rx="18" fill="#fffdf6" stroke="#2b3550" stroke-width="3"/>
-      <circle cx="60" cy="60" r="26" fill="none" stroke="#8a93a8" stroke-width="5"/>
-      <rect x="48" y="48" width="24" height="24" rx="3" fill="#e8b04b" stroke="#2b3550" stroke-width="2.5" data-d="downtown"/>
-      <path d="M96 22 L104 22 L104 98 L96 98 Z" fill="#7ec8e3" stroke="#2b3550" stroke-width="2" data-d="riverside"/>
-      <rect x="8" y="38" width="24" height="44" rx="3" fill="#9b7ede" stroke="#2b3550" stroke-width="2.5" data-d="oldtown"/>
-      <circle cx="60" cy="60" r="34" fill="none" stroke="#e2725b" stroke-width="6" stroke-dasharray="6 5" data-d="ringroad"/>
-      <circle cx="60" cy="60" r="4.5" fill="#2b3550" data-d="downtown"/>
+      <circle cx="60" cy="60" r="36" fill="none" stroke="#e2725b" stroke-width="6" stroke-dasharray="6 5"/>
+      <rect x="50" y="6" width="20" height="16" rx="3" fill="#e8b04b" stroke="#2b3550" stroke-width="2.5" data-d="northgate"/>
+      <rect x="50" y="98" width="20" height="16" rx="3" fill="#bfe3b4" stroke="#2b3550" stroke-width="2.5" data-d="hillview"/>
+      <rect x="98" y="50" width="16" height="20" rx="3" fill="#7ec8e3" stroke="#2b3550" stroke-width="2.5" data-d="riverside"/>
+      <rect x="6" y="50" width="16" height="20" rx="3" fill="#9b7ede" stroke="#2b3550" stroke-width="2.5" data-d="oldtown"/>
+      <rect x="52" y="52" width="16" height="16" rx="3" fill="#e8b04b" stroke="#2b3550" stroke-width="2.5" data-d="downtown"/>
       <text x="60" y="112" text-anchor="middle" font-size="8.5" font-weight="800" fill="#2b3550" font-family="Nunito,sans-serif">DISTRICTS</text>
     </svg>
   </div>
@@ -152,15 +152,29 @@
   </div>
 </section>
 
-<section id="dlg-find" class="dialog" hidden role="dialog" aria-label="No house found">
+<section id="dlg-find" class="dialog" hidden role="dialog" aria-label="Find a home">
   <div class="dlg-card">
-    <div class="dlg-head"><h2>No home yet</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-head"><h2 id="find-title">No home yet</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
     <div class="dlg-body">
-      <p id="find-text">There's no house for <strong id="find-name">@—</strong> yet. Claim an open plot and the town will raise a brand-new home with your name on the door.</p>
-      <input id="find-handle-input" type="text" maxlength="20" placeholder="pick a handle, e.g. sunnyfox" aria-label="Your handle" style="display:none">
+      <p id="find-text"></p>
+      <div class="btn-grid" id="find-actions"></div>
+    </div>
+  </div>
+</section>
+
+<section id="dlg-welcome" class="dialog" hidden role="dialog" aria-label="Join Maybe Real City">
+  <div class="dlg-card">
+    <div class="dlg-head"><h2>Welcome to Maybe Real City</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
+    <div class="dlg-body">
+      <p class="welcome-sub">Everyone gets a house. Pick your name to claim yours.</p>
+      <p id="welcome-plot-note" class="hint"></p>
+      <input id="welcome-handle" type="text" maxlength="20" placeholder="pick a name, e.g. sunny.fox" aria-label="Your name" autocomplete="off">
+      <h3 class="micro" id="welcome-district-label">Pick a neighborhood</h3>
+      <div class="btn-grid" id="welcome-districts"></div>
+      <p id="welcome-error" class="hint welcome-error"></p>
       <div class="btn-grid">
-        <button id="find-claim" class="desk-btn primary">⌂ Claim a plot &amp; build</button>
-        <button class="desk-btn" data-close>Keep exploring</button>
+        <button id="welcome-build" class="desk-btn primary">⌂ Build my house</button>
+        <button class="desk-btn" data-close>Just looking around</button>
       </div>
     </div>
   </div>
@@ -180,8 +194,9 @@
   <div class="dlg-card">
     <div class="dlg-head"><h2>About Maybe Real City</h2><button class="icon-btn dlg-close" data-close>✕</button></div>
     <div class="dlg-body prose">
-      <p>Maybe Real City is a tiny pretend town that lives in your browser. Wander the districts, peek at the neighbors, and claim a little house with your name on it.</p>
-      <p><strong>This is a demo.</strong> There are no accounts, no sign-ups, and no servers. Every house you claim, every coin you earn, and every fresh coat of paint is stored only in this browser, on this device. Clear your browser data and the town forgets you — the pre-built neighbors stay, because they were born with the town.</p>
+      <p>Maybe Real City is a tiny pretend town that lives in your browser. Wander the districts, visit the landmarks, and claim a little house with your name on it — every visitor gets exactly one.</p>
+      <p><strong>This is a demo.</strong> There are no accounts, no sign-ups, and no servers. When you join, your name, your home, your coins, and your settings are stored only in this browser, on this device — nothing ever leaves it. Clear your browser data and the town forgets you; the streets, the plaza, and the Founder's Mansion stay, because they were born with the town.</p>
+      <p>The golden mansion east of the plaza belongs to @hard8k.edt, the town's founder.</p>
       <p>No tracking, no analytics, no ads. Just rooftops.</p>
       <p class="credit">Made by MeowSamOP DZN</p>
     </div>
