@@ -1,7 +1,7 @@
-// HUD, dialogs, quests, routing, house panel. Browser only.
+// HUD, dialogs, quests, routing, house panel, join flow. Browser only.
 import { parseHash, findUrl, isValidHandle, normalizeHandle, ROUTES } from './routes.mjs';
 import { store, todayStamp } from './store.mjs';
-import { dayNumber, newTodayCount, BODY_PALETTE, ROOF_PALETTE } from './layout.mjs';
+import { dayNumber, planClaim, FOUNDER_HANDLE, BODY_PALETTE, ROOF_PALETTE } from './layout.mjs';
 import { UPGRADE_DEFS, FLAG_BONUS } from './build.mjs';
 
 const $ = id => document.getElementById(id);
@@ -9,10 +9,11 @@ const $ = id => document.getElementById(id);
 const QUESTS = [
   { id: 'sunrise',  name: 'Sunrise rounds',  desc: 'Fly to the Town Hall plaza and say good morning.', reward: 25 },
   { id: 'neighbor', name: 'Hello, neighbor', desc: 'Peek inside 3 different homes.', reward: 15 },
-  { id: 'corners',  name: 'Four corners',    desc: 'Set foot in all four districts.', reward: 30 },
+  { id: 'corners',  name: 'Four neighborhoods', desc: 'Set foot in all four neighborhoods.', reward: 30 },
   { id: 'flagday',  name: 'Raise the flag',  desc: 'Plant your flag on a home you claimed.', reward: 20 },
   { id: 'wish',     name: 'Make a wish',     desc: 'Click the Wishing Fountain.', reward: 10 },
 ];
+const NEIGHBORHOODS = ['northgate', 'riverside', 'oldtown', 'hillview'];
 
 function questState() {
   const today = todayStamp();
@@ -27,7 +28,10 @@ function questState() {
 export function initUI(ctx) {
   const { town, cam, layout } = ctx;
   const plotById = town.plotById;
-  const districtName = id => layout.districts.find(d => d.id === id).name;
+  const districtName = id => {
+    const d = layout.districts.find(x => x.id === id);
+    return d ? d.name : id;
+  };
 
   let toastTimer = 0;
   function toast(msg, ms = 2600) {
@@ -39,7 +43,7 @@ export function initUI(ctx) {
   }
 
   // ---------- dialogs ----------
-  const dialogs = ['dlg-townhall', 'dlg-house', 'dlg-quests', 'dlg-find', 'dlg-collection', 'dlg-about', 'dlg-privacy'];
+  const dialogs = ['dlg-townhall', 'dlg-house', 'dlg-quests', 'dlg-find', 'dlg-collection', 'dlg-about', 'dlg-privacy', 'dlg-welcome'];
   function openDialog(id) {
     for (const d of dialogs) $(d).hidden = d !== id;
     $('scrim').hidden = false;
@@ -59,11 +63,13 @@ export function initUI(ctx) {
 
   // ---------- stats ----------
   function refreshStats() {
-    const homes = layout.stats.houses + store.claims.length;
+    const claims = store.claims;
+    const homes = 1 + claims.length; // the Founder's Mansion + claimed homes
     $('stat-houses').textContent = homes;
     $('stat-residents').textContent = homes;
     $('stat-day').textContent = dayNumber();
-    $('stat-new').textContent = newTodayCount();
+    const today = todayStamp();
+    $('stat-new').textContent = claims.filter(c => todayStamp(new Date(c.created)) === today).length;
     $('coin-count').textContent = store.coins.toLocaleString();
     const qc = $('quest-coins');
     if (qc) qc.textContent = store.coins.toLocaleString();
@@ -72,18 +78,18 @@ export function initUI(ctx) {
   // ---------- camera flights ----------
   function flyToPlot(plot, radius = 44) {
     cam.flyTo(plot.x, plot.z, radius);
-    if (plot.district && plot.district !== 'downtown') questProgress('corners', plot.district);
+    if (plot.district && NEIGHBORHOODS.includes(plot.district)) questProgress('corners', plot.district);
   }
   function flyToDistrict(id) {
     const d = layout.districts.find(x => x.id === id);
     if (!d) return;
     cam.flyTo(d.anchor.x, d.anchor.z, 130);
-    questProgress('corners', id);
+    if (NEIGHBORHOODS.includes(id)) questProgress('corners', id);
   }
   function flyToLandmark(id) {
     const l = layout.landmarks.find(x => x.id === id);
     if (!l) return;
-    cam.flyTo(l.x, l.z, id === 'fountain' ? 46 : 62);
+    cam.flyTo(l.x, l.z, id === 'fountain' ? 46 : 70);
     if (id === 'townhall') questProgress('sunrise');
   }
 
@@ -108,7 +114,7 @@ export function initUI(ctx) {
     switch (id) {
       case 'sunrise': return !!q.sunrise;
       case 'neighbor': return q.neighbor.length >= 3;
-      case 'corners': return q.corners.length >= 4;
+      case 'corners': return NEIGHBORHOODS.every(n => q.corners.includes(n));
       case 'flagday': return !!q.flagday;
       case 'wish': return !!q.wish;
     }
@@ -118,7 +124,7 @@ export function initUI(ctx) {
   function questProgressText(id) {
     const q = questState().progress;
     if (id === 'neighbor') return `${Math.min(q.neighbor.length, 3)}/3 homes peeked`;
-    if (id === 'corners') return `${q.corners.length}/4 districts visited`;
+    if (id === 'corners') return `${NEIGHBORHOODS.filter(n => q.corners.includes(n)).length}/4 neighborhoods visited`;
     return questComplete(id) ? 'Done — claim your coins' : 'Not yet';
   }
 
@@ -152,18 +158,24 @@ export function initUI(ctx) {
     }
   }
 
+  // ---------- identity / claims ----------
+  function myClaim() {
+    const me = store.identity;
+    if (!me) return null;
+    return store.claims.find(c => c.plotId === me.plotId) || null;
+  }
+
   // ---------- house panel ----------
   let currentPlot = null;
-  function claimFor(plotId) {
-    return store.claims.find(c => c.plotId === plotId) || null;
-  }
-  function myClaims() { return store.claims; }
-
   function openHouse(plot) {
+    const claim = store.claims.find(c => c.plotId === plot.id) || null;
+    const isMansion = !!plot.mansion;
+    if (!claim && !isMansion) return; // vacant plots open the claim flow, not this panel
     currentPlot = plot;
-    const claim = claimFor(plot.id);
-    const resident = claim ? '@' + claim.handle : '@' + plot.resident;
-    $('house-name').textContent = resident + "'s home";
+    const me = store.identity;
+    const owned = !!claim && !!me && me.handle === claim.handle;
+    const handle = isMansion ? FOUNDER_HANDLE : claim.handle;
+    $('house-name').textContent = isMansion ? `@${FOUNDER_HANDLE}'s mansion` : `@${handle}'s home`;
     $('house-district').textContent = districtName(plot.district);
     $('house-address').textContent = `${plot.number} ${plot.street}`;
     const { total, lines } = town.claimValue(plot, claim);
@@ -174,13 +186,14 @@ export function initUI(ctx) {
     $('value-toggle').setAttribute('aria-expanded', 'false');
     $('value-toggle').textContent = 'breakdown ▾';
 
-    const owned = !!claim;
     $('house-owner-note').hidden = !owned;
     $('ha-remove').hidden = !owned;
-    for (const id of ['ha-flag', 'ha-upgrade', 'ha-look']) $(id).disabled = false;
-    $('house-hint').textContent = owned
-      ? 'This home is yours — fly the flag, upgrade it, give it a fresh coat of paint.'
-      : 'Someone lives here. Only the owner can redecorate, but you can still say hi.';
+    for (const id of ['ha-flag', 'ha-upgrade', 'ha-look']) $(id).disabled = isMansion;
+    $('house-hint').textContent = isMansion
+      ? "The founder's mansion — look around, but the paint stays as it is."
+      : owned
+        ? 'This home is yours — fly the flag, upgrade it, give it a fresh coat of paint.'
+        : 'A neighbor lives here. Wave hello, then claim your own plot to build yours.';
     questProgress('neighbor', plot.id);
     openDialog('dlg-house');
   }
@@ -194,8 +207,9 @@ export function initUI(ctx) {
 
   $('ha-share').addEventListener('click', async () => {
     if (!currentPlot) return;
-    const claim = claimFor(currentPlot.id);
-    const handle = claim ? claim.handle : currentPlot.resident;
+    const claim = store.claims.find(c => c.plotId === currentPlot.id);
+    const handle = currentPlot.mansion ? FOUNDER_HANDLE : (claim ? claim.handle : null);
+    if (!handle) return;
     const url = location.origin + location.pathname + findUrl(handle);
     try {
       await navigator.clipboard.writeText(url);
@@ -210,8 +224,11 @@ export function initUI(ctx) {
   });
 
   $('ha-flag').addEventListener('click', () => {
-    const claim = currentPlot && claimFor(currentPlot.id);
-    if (!claim) { $('house-hint').textContent = 'Only the owner can fly a flag here — claim your own plot to fly yours.'; return; }
+    const claim = myClaim();
+    if (!claim || !currentPlot || claim.plotId !== currentPlot.id) {
+      $('house-hint').textContent = 'Only the owner can fly a flag here — claim your own plot to fly yours.';
+      return;
+    }
     if (claim.flag) { $('house-hint').textContent = 'Your flag is already flying proud.'; return; }
     claim.flag = true;
     store.claims = store.claims;
@@ -222,8 +239,11 @@ export function initUI(ctx) {
   });
 
   $('ha-upgrade').addEventListener('click', () => {
-    const claim = currentPlot && claimFor(currentPlot.id);
-    if (!claim) { $('house-hint').textContent = 'Only the owner can upgrade this home.'; return; }
+    const claim = myClaim();
+    if (!claim || !currentPlot || claim.plotId !== currentPlot.id) {
+      $('house-hint').textContent = 'Only the owner can upgrade this home.';
+      return;
+    }
     const next = UPGRADE_DEFS.find(u => u.tier === claim.tier + 1);
     if (!next) { $('house-hint').textContent = 'Fully upgraded — this home is a town landmark in its own right.'; return; }
     if (store.coins < next.cost) {
@@ -240,8 +260,11 @@ export function initUI(ctx) {
   });
 
   $('ha-look').addEventListener('click', () => {
-    const claim = currentPlot && claimFor(currentPlot.id);
-    if (!claim) { $('house-hint').textContent = 'Only the owner can repaint this home.'; return; }
+    const claim = myClaim();
+    if (!claim || !currentPlot || claim.plotId !== currentPlot.id) {
+      $('house-hint').textContent = 'Only the owner can repaint this home.';
+      return;
+    }
     claim.body = (claim.body + 1) % BODY_PALETTE.length;
     claim.roof = (claim.roof + 2) % ROOF_PALETTE.length;
     store.claims = store.claims;
@@ -250,79 +273,151 @@ export function initUI(ctx) {
   });
 
   $('ha-remove').addEventListener('click', () => {
-    const claim = currentPlot && claimFor(currentPlot.id);
-    if (!claim) return;
-    if (!confirm(`Remove your name from ${currentPlot.number} ${currentPlot.street}? The plot goes back on the market.`)) return;
+    const claim = myClaim();
+    if (!claim || !currentPlot || claim.plotId !== currentPlot.id) return;
+    if (!confirm(`Give up your home at ${currentPlot.number} ${currentPlot.street}? The plot goes back on the market.`)) return;
     store.claims = store.claims.filter(c => c.plotId !== currentPlot.id);
+    store.identity = null;
     town.refreshClaims();
     refreshStats();
     closeDialogs();
     toast('Your name is off the door. The plot is open again.');
   });
 
-  // ---------- claim flow ----------
-  let claimPlot = null;
-  function openClaimForPlot(plot) {
-    claimPlot = plot;
-    pendingHandle = null;
-    $('find-text').innerHTML = `This is an open plot at <strong>${plot.number} ${plot.street}</strong> (${districtName(plot.district)}). Give it a name and the town will raise a home there.`;
-    const inp = $('find-handle-input');
-    inp.style.display = '';
-    inp.value = '';
-    openDialog('dlg-find');
-    setTimeout(() => inp.focus(), 150);
+  // ---------- join flow ----------
+  let joinPlot = null;      // preselected plot (from a FOR RENT sign) or null
+  let joinDistrict = 'northgate';
+  let welcomeShown = false;
+
+  function renderDistrictPicker() {
+    const wrap = $('welcome-districts');
+    wrap.innerHTML = '';
+    for (const id of NEIGHBORHOODS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'desk-btn dist-btn' + (id === joinDistrict ? ' active' : '');
+      b.textContent = districtName(id);
+      b.addEventListener('click', () => { joinDistrict = id; renderDistrictPicker(); });
+      wrap.appendChild(b);
+    }
   }
 
-  function doClaim(plot, rawHandle) {
-    const handle = normalizeHandle(rawHandle);
-    if (!isValidHandle(handle)) { toast('Handles are 2–20 letters, numbers, or underscores.'); return; }
-    const taken = store.claims.some(c => c.handle === handle) ||
-      town.housePlots.some(p => p.resident === handle);
-    if (taken) { toast(`@${handle} is already taken — try another.`); return; }
+  function openWelcome({ plot = null, handle = '' } = {}) {
+    joinPlot = plot;
+    if (plot) joinDistrict = plot.district;
+    renderDistrictPicker();
+    $('welcome-districts').style.display = plot ? 'none' : '';
+    $('welcome-district-label').style.display = plot ? 'none' : '';
+    $('welcome-plot-note').textContent = plot
+      ? `Plot ${plot.number} · ${plot.street} (${districtName(plot.district)}) — this one will be yours.`
+      : 'Pick a neighborhood — the town will raise your home on a good open plot there.';
+    $('welcome-handle').value = handle || '';
+    $('welcome-error').textContent = '';
+    openDialog('dlg-welcome');
+    setTimeout(() => $('welcome-handle').focus(), 150);
+  }
+
+  const REASONS = {
+    invalid: 'Handles are 2–20 letters, numbers, dots, or underscores.',
+    taken: 'That name is already taken — try another.',
+    full: 'That neighborhood is full — pick another one.',
+    unavailable: 'That plot just got claimed — pick another.',
+  };
+
+  function doJoin() {
+    if (store.identity) { toast(`You're already @${store.identity.handle} — one home per neighbor.`); return; }
+    const raw = $('welcome-handle').value;
+    const takenIds = store.claims.map(c => c.plotId);
+    const plan = joinPlot
+      ? planClaim(layout.plots, takenIds, raw, joinPlot.district, joinPlot.id)
+      : planClaim(layout.plots, takenIds, raw, joinDistrict);
+    if (!plan.ok || store.claimIndex[plan.handle]) {
+      $('welcome-error').textContent = plan.ok ? REASONS.taken : (REASONS[plan.reason] || REASONS.unavailable);
+      return;
+    }
+    const plot = plotById.get(plan.plotId);
+    if (!plot) { $('welcome-error').textContent = REASONS.unavailable; return; }
     const claim = {
-      plotId: plot.id, handle, created: Date.now(),
-      flag: false, tier: 0, body: plot.body, roof: plot.roof,
+      plotId: plan.plotId, handle: plan.handle, created: Date.now(),
+      flag: false, tier: 0,
+      body: Math.floor(Math.random() * BODY_PALETTE.length),
+      roof: Math.floor(Math.random() * ROOF_PALETTE.length),
     };
-    const claims = store.claims;
-    claims.push(claim);
-    store.claims = claims;
+    store.claims = [...store.claims, claim];
+    store.identity = { handle: plan.handle, plotId: plan.plotId, joinedAt: Date.now() };
     town.refreshClaims();
     refreshStats();
     closeDialogs();
     town.burst(plot.x, plot.z);
     flyToPlot(plot, 40);
     setTimeout(() => openHouse(plot), 900);
-    toast(`Welcome home, @${handle}!`);
+    toast(`Welcome home, @${plan.handle}!`);
   }
 
-  $('find-claim').addEventListener('click', () => {
-    if (claimPlot) {
-      doClaim(claimPlot, $('find-handle-input').value);
-    } else if (pendingHandle) {
-      const open = town.layout.plots.find(p => p.open && !store.claims.some(c => c.plotId === p.id));
-      if (!open) { toast('No open plots left — the town is full!'); return; }
-      doClaim(open, pendingHandle);
-    }
-  });
+  $('welcome-build').addEventListener('click', doJoin);
+  $('welcome-handle').addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
+
+  function maybeWelcome() {
+    if (welcomeShown || store.identity) return;
+    welcomeShown = true;
+    openWelcome();
+  }
+
+  // ---------- vacant plot (FOR RENT sign) ----------
+  function openClaimForPlot(plot) {
+    const me = store.identity;
+    if (me) { toast(`You're already @${me.handle} — one home per neighbor.`); return; }
+    openWelcome({ plot });
+  }
 
   // ---------- find ----------
-  let pendingHandle = null;
+  function addFindBtn(actions, text, primary, onClick) {
+    const b = document.createElement('button');
+    b.className = 'desk-btn' + (primary ? ' primary' : '');
+    b.textContent = text;
+    b.addEventListener('click', onClick);
+    actions.appendChild(b);
+  }
+
   function findHouse(rawHandle) {
     const handle = normalizeHandle(rawHandle);
-    if (!isValidHandle(handle)) { toast('Handles are 2–20 letters, numbers, or underscores.'); return; }
-    const claim = store.claims.find(c => c.handle === handle);
-    if (claim) {
-      const plot = plotById.get(claim.plotId);
+    if (!isValidHandle(handle)) { toast('Handles are 2–20 letters, numbers, dots, or underscores.'); return; }
+    const me = store.identity;
+    // founder's mansion
+    if (handle === FOUNDER_HANDLE) {
+      closeDialogs();
+      flyToPlot(town.mansionPlot, 44);
+      setTimeout(() => openHouse(town.mansionPlot), 800);
+      return;
+    }
+    // claimed home
+    const plotId = store.claimIndex[handle];
+    if (plotId) {
+      const plot = plotById.get(plotId);
       if (plot) { closeDialogs(); flyToPlot(plot, 40); setTimeout(() => openHouse(plot), 800); return; }
     }
-    const seeded = town.housePlots.find(p => p.resident === handle);
-    if (seeded) {
-      closeDialogs(); flyToPlot(seeded, 44); setTimeout(() => openHouse(seeded), 800); return;
+    // unknown handle
+    const actions = $('find-actions');
+    actions.innerHTML = '';
+    if (me && me.handle === handle) {
+      const p = plotById.get(me.plotId);
+      closeDialogs();
+      if (p) { flyToPlot(p, 40); setTimeout(() => openHouse(p), 800); }
+      return;
     }
-    pendingHandle = handle;
-    claimPlot = null;
-    $('find-text').innerHTML = `There's no house for <strong>@${handle}</strong> yet. Claim an open plot and the town will raise a brand-new home with your name on the door.`;
-    $('find-handle-input').style.display = 'none';
+    $('find-title').textContent = 'No home yet';
+    if (me) {
+      $('find-text').innerHTML = `There's no house for <strong>@${handle}</strong> yet — and you're already <strong>@${me.handle}</strong>. One home per neighbor in this town.`;
+      addFindBtn(actions, 'Visit my house', true, () => {
+        const p = plotById.get(me.plotId);
+        closeDialogs();
+        if (p) { flyToPlot(p, 40); setTimeout(() => openHouse(p), 800); }
+      });
+    } else {
+      $('find-text').innerHTML = `There's no house for <strong>@${handle}</strong> yet. Claim the name and the town will raise a brand-new home with it on the door.`;
+      addFindBtn(actions, 'Claim this name', true, () => openWelcome({ handle }));
+    }
+    addFindBtn(actions, 'Keep exploring', false, closeDialogs);
     openDialog('dlg-find');
   }
 
@@ -340,13 +435,13 @@ export function initUI(ctx) {
   $('coin-pill').addEventListener('click', () => { renderQuests(); openDialog('dlg-quests'); });
   $('th-treasury').addEventListener('click', () => { renderQuests(); openDialog('dlg-quests'); });
   $('th-upgrade').addEventListener('click', () => {
-    const mine = myClaims()[0];
-    if (!mine) { toast('Claim a home first — then upgrade it here.'); return; }
+    const mine = myClaim();
+    if (!mine) { toast('Join the town first — then upgrade your home here.'); return; }
     openHouse(plotById.get(mine.plotId));
   });
   $('th-look').addEventListener('click', () => {
-    const mine = myClaims()[0];
-    if (!mine) { toast('Claim a home first — then give it a fresh look.'); return; }
+    const mine = myClaim();
+    if (!mine) { toast('Join the town first — then give your home a fresh look.'); return; }
     mine.body = (mine.body + 1) % BODY_PALETTE.length;
     mine.roof = (mine.roof + 2) % ROOF_PALETTE.length;
     store.claims = store.claims;
@@ -366,43 +461,46 @@ export function initUI(ctx) {
     }
   }
 
+  function feedRow(handle, plot, tag) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>@${handle}${tag ? ' · ' + tag : ''}</span>`;
+    const b = document.createElement('button');
+    b.textContent = 'Fly there';
+    b.addEventListener('click', () => {
+      closeDialogs();
+      flyToPlot(plot, 44);
+      setTimeout(() => openHouse(plot), 800);
+    });
+    li.appendChild(b);
+    return li;
+  }
+
   function renderFeed() {
     const ul = $('th-feed');
     ul.innerHTML = '';
-    const claims = store.claims.slice().sort((a, b) => b.created - a.created).slice(0, 6);
-    if (!claims.length) {
-      ul.innerHTML = '<li class="empty">No claimed homes yet — be the first on the block!</li>';
-      return;
-    }
+    ul.appendChild(feedRow(FOUNDER_HANDLE, town.mansionPlot, "Founder's Mansion"));
+    const claims = store.claims.slice().sort((a, b) => b.created - a.created).slice(0, 5);
     for (const c of claims) {
       const p = plotById.get(c.plotId);
-      const li = document.createElement('li');
-      li.innerHTML = `<span>@${c.handle} · ${p ? districtName(p.district) : ''}</span>`;
-      const b = document.createElement('button');
-      b.textContent = 'Fly there';
-      b.addEventListener('click', () => { closeDialogs(); if (p) { flyToPlot(p, 44); setTimeout(() => openHouse(p), 800); } });
-      li.appendChild(b);
-      ul.appendChild(li);
+      if (p) ul.appendChild(feedRow(c.handle, p, districtName(p.district)));
     }
   }
 
   function renderCollection() {
     const ul = $('collection-list');
     ul.innerHTML = '';
+    ul.appendChild(feedRow(FOUNDER_HANDLE, town.mansionPlot, "Founder's Mansion"));
     const claims = store.claims.slice().sort((a, b) => b.created - a.created);
     if (!claims.length) {
-      ul.innerHTML = '<li class="empty">Nothing claimed yet. The town is waiting.</li>';
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No neighbors yet — the town is waiting.';
+      ul.appendChild(li);
       return;
     }
     for (const c of claims) {
       const p = plotById.get(c.plotId);
-      const li = document.createElement('li');
-      li.innerHTML = `<span>@${c.handle} · ${p ? `${p.number} ${p.street}` : ''}</span>`;
-      const b = document.createElement('button');
-      b.textContent = 'Visit';
-      b.addEventListener('click', () => { closeDialogs(); if (p) { flyToPlot(p, 44); setTimeout(() => openHouse(p), 800); } });
-      li.appendChild(b);
-      ul.appendChild(li);
+      if (p) ul.appendChild(feedRow(c.handle, p, `${p.number} ${p.street}`));
     }
   }
 
@@ -448,9 +546,10 @@ export function initUI(ctx) {
   refreshStats();
   applyGfx();
   renderQuests();
+  setTimeout(maybeWelcome, 1600);
 
   return {
     toast, openHouse, openClaimForPlot, findHouse, flyToPlot, flyToDistrict, flyToLandmark,
-    questProgress, refreshStats, route,
+    questProgress, refreshStats, route, openWelcome,
   };
 }
