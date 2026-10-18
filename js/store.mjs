@@ -31,10 +31,27 @@ function remove(key) {
   } catch { /* ignore */ }
 }
 
+function buildClaimIndex(claims) {
+  const idx = {};
+  for (const c of claims) {
+    if (c && c.handle) idx[String(c.handle).toLowerCase()] = c.plotId;
+  }
+  return idx;
+}
+
 export const store = {
   // claims: [{ plotId, handle, created, flag, tier, body, roof }]
   get claims() { return read('claims', []); },
-  set claims(v) { write('claims', v); },
+  set claims(v) {
+    write('claims', v);
+    write('claimsmap', buildClaimIndex(v)); // mayberc_claims: { handleLower: plotId }
+  },
+  // quick handle -> plotId lookup (kept in sync by the claims setter)
+  get claimIndex() { return read('claimsmap', buildClaimIndex(read('claims', []))); },
+
+  // identity: { handle, plotId, joinedAt } | null — the visitor's own claimed home
+  get identity() { return read('identity', null); },
+  set identity(v) { write('identity', v); },
 
   get coins() { return read('coins', 100); }, // visitors start with a 100-coin welcome grant
   set coins(v) { write('coins', v); },
@@ -48,7 +65,7 @@ export const store = {
   set settings(v) { write('settings', v); },
 
   clearAll() {
-    for (const k of ['claims', 'coins', 'quests', 'settings']) remove(k);
+    for (const k of ['claims', 'claimsmap', 'identity', 'coins', 'quests', 'settings']) remove(k);
   },
 };
 
