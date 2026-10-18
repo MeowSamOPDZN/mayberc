@@ -1,8 +1,8 @@
 // Three.js town construction for Maybe Real City.
 // buildTown(scene, layout, store) -> town api. Browser only.
 import * as THREE from 'three';
-import { BODY_PALETTE, ROOF_PALETTE } from './layout.mjs';
-import { makeLabel, makeDotTexture } from './labels.mjs';
+import { BODY_PALETTE, ROOF_PALETTE, RING, PLAZA_RADIUS, MANSION_PLOT_ID, ringPoint } from './layout.mjs';
+import { makeLabel } from './labels.mjs';
 
 const INK = 0x2b3550;
 const CLAIM_CAP = 64;
@@ -15,11 +15,11 @@ export const FLAG_BONUS = 25;
 
 function roofPrismGeometry(hw = 2.45, h = 1.9, hd = 2.15) {
   const v = [
-    -hw,0,hd,  hw,0,hd,  0,h,hd,          // front
-    hw,0,-hd,  -hw,0,-hd,  0,h,-hd,        // back
-    -hw,0,-hd,  -hw,0,hd,  0,h,hd,         // left slope
+    -hw,0,hd,  hw,0,hd,  0,h,hd,
+    hw,0,-hd,  -hw,0,-hd,  0,h,-hd,
+    -hw,0,-hd,  -hw,0,hd,  0,h,hd,
     -hw,0,-hd,  0,h,hd,  0,h,-hd,
-    hw,0,hd,  hw,0,-hd,  0,h,-hd,          // right slope
+    hw,0,hd,  hw,0,-hd,  0,h,-hd,
     hw,0,hd,  0,h,-hd,  0,h,hd,
   ];
   const g = new THREE.BufferGeometry();
@@ -42,6 +42,24 @@ function stripeTexture() {
   return t;
 }
 
+function rentSignTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#c99a63'; ctx.fillRect(0, 0, 256, 128);
+  ctx.strokeStyle = '#2b3550'; ctx.lineWidth = 10; ctx.strokeRect(5, 5, 246, 118);
+  ctx.fillStyle = '#2b3550';
+  ctx.font = '900 44px Nunito, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('FOR RENT', 128, 52);
+  ctx.font = '700 24px Nunito, sans-serif';
+  ctx.fillText('claim me!', 128, 94);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
 function houseMatrices(plot) {
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), plot.rot);
@@ -49,19 +67,38 @@ function houseMatrices(plot) {
   return m;
 }
 
+function roundedRectPath(hx, hz, r) {
+  const s = new THREE.Shape();
+  s.moveTo(-hx + r, -hz);
+  s.lineTo(hx - r, -hz);
+  s.absarc(hx - r, -hz + r, r, -Math.PI / 2, 0, false);
+  s.lineTo(hx, hz - r);
+  s.absarc(hx - r, hz - r, r, 0, Math.PI / 2, false);
+  s.lineTo(-hx + r, hz);
+  s.absarc(-hx + r, hz - r, r, Math.PI / 2, Math.PI, false);
+  s.lineTo(-hx, -hz + r);
+  s.absarc(-hx + r, -hz + r, r, Math.PI, Math.PI * 1.5, false);
+  return s;
+}
+
 export function buildTown(scene, layout, store) {
   const plotById = new Map(layout.plots.map(p => [p.id, p]));
-  const housePlots = layout.plots.filter(p => !p.open);
-  const plotIndex = new Map(housePlots.map((p, i) => [p.id, i]));
+  const mansionPlot = plotById.get(MANSION_PLOT_ID);
   const pickables = [];
   const flags = [];   // { mesh, phase }
   const bursts = [];
   let claimSlots = []; // instanceId -> plotId for claimed houses
   const claimLabels = new THREE.Group();
   const claimVisuals = new THREE.Group();
-  scene.add(claimLabels, claimVisuals);
+  const claimHits = new THREE.Group(); // invisible generous hit-boxes for claimed houses
+  scene.add(claimLabels, claimVisuals, claimHits);
+  pickables.push(claimHits);
 
   const dummyColor = new THREE.Color();
+  const lam = opts => new THREE.MeshLambertMaterial({ color: 0xffffff, ...opts });
+
+  // Shared invisible-hit material (raycastable, renders nothing).
+  const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
 
   // ---------- lights / sky ----------
   scene.background = new THREE.Color(0xfff8ec);
@@ -95,123 +132,73 @@ export function buildTown(scene, layout, store) {
     return m;
   };
 
-  // ---------- roads / river / plaza ----------
-  flat(new THREE.RingGeometry(56, 64, 72), 0x3a3f4a, 0, 0);
-  const dashPts = [];
-  for (let i = 0; i <= 128; i++) {
-    const a = (i / 128) * Math.PI * 2;
-    dashPts.push(new THREE.Vector3(Math.cos(a) * 60, 0.14, Math.sin(a) * 60));
-  }
-  const dashLine = new THREE.LineLoop(
-    new THREE.BufferGeometry().setFromPoints(dashPts),
-    new THREE.LineDashedMaterial({ color: 0xfffdf6, dashSize: 2.2, gapSize: 2.2 })
-  );
-  dashLine.computeLineDistances();
-  scene.add(dashLine);
-
-  flat(new THREE.PlaneGeometry(6, 96), 0x3a3f4a, 0, 0);       // downtown N-S
-  flat(new THREE.PlaneGeometry(96, 6), 0x3a3f4a, 0, 0);       // downtown E-W
-  flat(new THREE.PlaneGeometry(5, 150), 0xe8dcc8, 126, 0, 0.1);    // riverside walk
-  flat(new THREE.PlaneGeometry(4, 160), 0x3a3f4a, -114, 0);   // old town street
-  flat(new THREE.CircleGeometry(15, 40), 0xefe6d4, 0, 0, 0.12); // plaza
-  flat(new THREE.PlaneGeometry(18, 300), 0x7ec8e3, 112, 0, 0.05); // river
-  flat(new THREE.PlaneGeometry(4, 300), 0xe8dcc8, 101, 0, 0.055);
-  flat(new THREE.PlaneGeometry(4, 300), 0xe8dcc8, 123, 0, 0.055);
-  flat(new THREE.PlaneGeometry(70, 14), 0x4a4f5a, -115, 118, 0.06); // runway
-  for (let i = -3; i <= 3; i++) flat(new THREE.PlaneGeometry(3, 0.7), 0xfffdf6, -115 + i * 9, 118, 0.12);
-
-  // ---------- seeded houses (instanced) ----------
-  const nH = housePlots.length;
-  const bodyGeo = new THREE.BoxGeometry(4.2, 3, 3.6); bodyGeo.translate(0, 1.5, 0);
-  const roofGeo = roofPrismGeometry(); roofGeo.translate(0, 3, 0);
-  const doorGeo = new THREE.BoxGeometry(0.9, 1.6, 0.15); doorGeo.translate(0, 0.8, 1.83);
-  const winGeo = new THREE.BoxGeometry(0.9, 0.9, 0.12);
-  const winGeoL = winGeo.clone(); winGeoL.translate(-1.25, 1.9, 1.82);
-
-  const lam = opts => new THREE.MeshLambertMaterial({ color: 0xffffff, ...opts });
-  const bodyMesh = new THREE.InstancedMesh(bodyGeo, lam({}), nH);
-  const roofMesh = new THREE.InstancedMesh(roofGeo, lam({ flatShading: true }), nH);
-  const doorMesh = new THREE.InstancedMesh(doorGeo, lam({}), nH);
-  const winMesh = new THREE.InstancedMesh(winGeoL, lam({ color: 0xbfe3ef }), nH * 2);
-  for (const m of [bodyMesh, roofMesh, doorMesh, winMesh]) {
-    m.castShadow = true; m.receiveShadow = true;
-    m.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    scene.add(m);
-  }
-  bodyMesh.userData.pickKind = 'house';
-  pickables.push(bodyMesh);
-
-  housePlots.forEach((p, i) => {
-    const M = houseMatrices(p);
-    bodyMesh.setMatrixAt(i, M);
-    roofMesh.setMatrixAt(i, M);
-    doorMesh.setMatrixAt(i, M);
-    winMesh.setMatrixAt(i * 2, M);       // left window (geometry has -1.25 x offset baked)
-    winMesh.setMatrixAt(i * 2 + 1, M);   // right window slot — fixed up just below
-    bodyMesh.setColorAt(i, dummyColor.set(BODY_PALETTE[p.body]));
-    roofMesh.setColorAt(i, dummyColor.set(ROOF_PALETTE[p.roof]));
-    doorMesh.setColorAt(i, dummyColor.set('#7a5238'));
-  });
-  // Right window: shift the instance +2.5 in local x (lands at +1.25).
-  const offR = new THREE.Matrix4();
-  housePlots.forEach((p, i) => {
-    // slot i*2 uses winGeoL (left), slot i*2+1 re-uses winGeoL matrix shifted to right
-    offR.makeTranslation(2.5, 0, 0).premultiply(new THREE.Matrix4().makeRotationY(p.rot));
-    const shifted = new THREE.Matrix4().multiplyMatrices(
-      new THREE.Matrix4().makeTranslation(p.x, 0, p.z), offR);
-    winMesh.setMatrixAt(i * 2 + 1, shifted);
-  });
-  for (const m of [bodyMesh, roofMesh, doorMesh, winMesh]) {
-    m.instanceMatrix.needsUpdate = true;
-    if (m.instanceColor) m.instanceColor.needsUpdate = true;
-  }
-
-  // dots above seeded houses
+  // ---------- ring road (rounded rectangle loop) ----------
   {
-    const pos = new Float32Array(nH * 3);
-    housePlots.forEach((p, i) => { pos[i * 3] = p.x; pos[i * 3 + 1] = 6.4; pos[i * 3 + 2] = p.z; });
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({
-      size: 4.2, map: makeDotTexture(), transparent: true, depthWrite: false, sizeAttenuation: true,
-    }));
-    scene.add(pts);
+    const outer = roundedRectPath(RING.hx + RING.width / 2, RING.hz + RING.width / 2, RING.r + RING.width / 2);
+    const hole = roundedRectPath(RING.hx - RING.width / 2, RING.hz - RING.width / 2, RING.r - RING.width / 2);
+    outer.holes.push(hole);
+    const road = new THREE.Mesh(new THREE.ShapeGeometry(outer, 24), lam({ color: 0x3a3f4a }));
+    road.rotation.x = -Math.PI / 2; road.position.y = 0.06;
+    road.receiveShadow = true;
+    scene.add(road);
+    const dashPts = [];
+    for (let i = 0; i <= 256; i++) {
+      const q = ringPoint(i / 256);
+      dashPts.push(new THREE.Vector3(q.x, 0.14, q.z));
+    }
+    const dashLine = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(dashPts),
+      new THREE.LineDashedMaterial({ color: 0xfffdf6, dashSize: 2.2, gapSize: 2.2 })
+    );
+    dashLine.computeLineDistances();
+    scene.add(dashLine);
   }
 
-  // ---------- claimed houses (dynamic instanced, cap CLAIM_CAP) ----------
-  const cBody = new THREE.InstancedMesh(bodyGeo, lam({}), CLAIM_CAP);
-  const cRoof = new THREE.InstancedMesh(roofGeo, lam({ flatShading: true }), CLAIM_CAP);
-  const cDoor = new THREE.InstancedMesh(doorGeo, lam({}), CLAIM_CAP);
-  const cWin = new THREE.InstancedMesh(winGeoL, lam({ color: 0xbfe3ef }), CLAIM_CAP * 2);
-  for (const m of [cBody, cRoof, cDoor, cWin]) {
-    m.castShadow = true; m.receiveShadow = true;
-    m.count = 0;
-    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    scene.add(m);
-  }
-  cBody.userData.pickKind = 'claimed';
-  pickables.push(cBody);
+  // ---------- downtown streets + grand plaza ----------
+  flat(new THREE.PlaneGeometry(6, 150), 0x3a3f4a, 0, 0);        // N-S
+  flat(new THREE.PlaneGeometry(150, 6), 0x3a3f4a, 0, 0);        // E-W
+  flat(new THREE.CircleGeometry(PLAZA_RADIUS, 48), 0xefe6d4, 0, 0, 0.12); // plaza paving
 
-  // ---------- towers ----------
+  // ---------- district streets ----------
+  flat(new THREE.PlaneGeometry(5, 92), 0x3a3f4a, 0, -116);      // northgate feeder
+  flat(new THREE.PlaneGeometry(5, 92), 0x3a3f4a, 0, 116);       // hillview feeder
+  flat(new THREE.PlaneGeometry(52, 5), 0x3a3f4a, 94, 0);        // riverside feeder
+  flat(new THREE.PlaneGeometry(52, 5), 0x3a3f4a, -94, 0);       // oldtown feeder
+  flat(new THREE.PlaneGeometry(5, 150), 0x3a3f4a, 87, 0);       // riverside streets
+  flat(new THREE.PlaneGeometry(5, 150), 0x3a3f4a, 101, 0);
+  flat(new THREE.PlaneGeometry(5, 150), 0x3a3f4a, -87, 0);      // old town streets
+  flat(new THREE.PlaneGeometry(5, 150), 0x3a3f4a, -101, 0);
+
+  // ---------- river (riverside) ----------
+  flat(new THREE.PlaneGeometry(14, 300), 0x7ec8e3, 126, 0, 0.05);
+  flat(new THREE.PlaneGeometry(3, 300), 0xe8dcc8, 117.5, 0, 0.055);
+  flat(new THREE.PlaneGeometry(3, 300), 0xe8dcc8, 134.5, 0, 0.055);
+
+  // ---------- plaza lamps + benches ----------
   {
-    const tg = new THREE.BoxGeometry(1, 1, 1); tg.translate(0, 0.5, 0);
-    const tm = new THREE.InstancedMesh(tg, lam({}), layout.towers.length);
-    const rm = new THREE.InstancedMesh(tg, lam({}), layout.towers.length);
-    const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3();
-    layout.towers.forEach((t, i) => {
-      M.compose(P.set(t.x, 0, t.z), Q.identity(), S.set(t.w, t.h, t.d));
-      tm.setMatrixAt(i, M);
-      tm.setColorAt(i, dummyColor.set(t.color));
-      M.compose(P.set(t.x, t.h, t.z), Q, S.set(t.w * 0.45, t.roofH, t.d * 0.45));
-      rm.setMatrixAt(i, M);
-      rm.setColorAt(i, dummyColor.set('#8a93a8'));
-    });
-    tm.castShadow = rm.castShadow = true;
-    tm.receiveShadow = true;
-    scene.add(tm, rm);
+    const lampG = new THREE.Group();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      if (Math.abs(a) < 0.65 || Math.abs(a - Math.PI * 2) < 0.65) continue; // mansion side
+      const x = Math.cos(a) * (PLAZA_RADIUS + 2.5), z = Math.sin(a) * (PLAZA_RADIUS + 2.5);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 4.6, 8), lam({ color: 0x2b3550 }));
+      pole.position.set(x, 2.3, z); pole.castShadow = true; lampG.add(pole);
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
+      bulb.position.set(x, 4.9, z); lampG.add(bulb);
+    }
+    scene.add(lampG);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.5, 1.1), lam({ color: 0x8a5a44 }));
+      bench.position.set(Math.cos(a) * 9.5, 0.55, Math.sin(a) * 9.5);
+      bench.rotation.y = -a + Math.PI / 2;
+      bench.castShadow = true;
+      scene.add(bench);
+    }
   }
 
-  // ---------- trees ----------
+  // ---------- trees (plaza edge only) ----------
   {
     const trunkG = new THREE.CylinderGeometry(0.28, 0.42, 1.6, 6); trunkG.translate(0, 0.8, 0);
     const folG = new THREE.IcosahedronGeometry(1.9, 0); folG.translate(0, 2.9, 0);
@@ -229,6 +216,24 @@ export function buildTown(scene, layout, store) {
     scene.add(trunkM, folM);
   }
 
+  // ---------- claimed houses (dynamic instanced) ----------
+  const bodyGeo = new THREE.BoxGeometry(4.2, 3, 3.6); bodyGeo.translate(0, 1.5, 0);
+  const roofGeo = roofPrismGeometry(); roofGeo.translate(0, 3, 0);
+  const doorGeo = new THREE.BoxGeometry(0.9, 1.6, 0.15); doorGeo.translate(0, 0.8, 1.83);
+  const winGeoL = new THREE.BoxGeometry(0.9, 0.9, 0.12); winGeoL.translate(-1.25, 1.9, 1.82);
+
+  const cBody = new THREE.InstancedMesh(bodyGeo, lam({}), CLAIM_CAP);
+  const cRoof = new THREE.InstancedMesh(roofGeo, lam({ flatShading: true }), CLAIM_CAP);
+  const cDoor = new THREE.InstancedMesh(doorGeo, lam({}), CLAIM_CAP);
+  const cWin = new THREE.InstancedMesh(winGeoL, lam({ color: 0xbfe3ef }), CLAIM_CAP * 2);
+  for (const m of [cBody, cRoof, cDoor, cWin]) {
+    m.castShadow = true; m.receiveShadow = true;
+    m.count = 0;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(m);
+  }
+  const hitBoxGeo = new THREE.BoxGeometry(11, 10, 11); // generous tap target per claimed plot
+
   // ---------- landmarks ----------
   const landmarkHits = [];
   function tagPick(obj, pick) {
@@ -240,10 +245,12 @@ export function buildTown(scene, layout, store) {
     m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
     return m;
   };
+  const landmarkPos = id => layout.landmarks.find(l => l.id === id);
 
   // Town Hall
   {
-    const g = new THREE.Group(); g.position.set(0, 0, -34);
+    const L = landmarkPos('townhall');
+    const g = new THREE.Group(); g.position.set(L.x, 0, L.z);
     g.add(box(24, 9, 12, '#fff6e9', 0, 4.5, 0));
     const roof = new THREE.Mesh(roofPrismGeometry(), lam({ color: 0xc05a43, flatShading: true }));
     roof.scale.set(4.9, 1.4, 2.9); roof.position.y = 9; roof.castShadow = true; g.add(roof);
@@ -271,7 +278,8 @@ export function buildTown(scene, layout, store) {
 
   // Town Bank
   {
-    const g = new THREE.Group(); g.position.set(0, 0, 42);
+    const L = landmarkPos('bank');
+    const g = new THREE.Group(); g.position.set(L.x, 0, L.z);
     g.add(box(16, 8, 10, '#3f7d5d', 0, 4, 0));
     g.add(box(17.5, 1.1, 11.5, '#e8b04b', 0, 8.5, 0));
     for (const px of [-6, -2, 2, 6]) {
@@ -288,7 +296,8 @@ export function buildTown(scene, layout, store) {
   // Wishing Fountain (animated)
   const fountain = { water: null, top: null };
   {
-    const g = new THREE.Group();
+    const L = landmarkPos('fountain');
+    const g = new THREE.Group(); g.position.set(L.x, 0, L.z);
     const base = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 5.2, 1.5, 14), lam({ color: 0xd9d2c4 }));
     base.position.y = 0.75; base.castShadow = base.receiveShadow = true; g.add(base);
     const water = new THREE.Mesh(new THREE.CircleGeometry(3.9, 24),
@@ -308,7 +317,8 @@ export function buildTown(scene, layout, store) {
 
   // Cloud Stadium
   {
-    const g = new THREE.Group(); g.position.set(105, 0, -95);
+    const L = landmarkPos('stadium');
+    const g = new THREE.Group(); g.position.set(L.x, 0, L.z);
     const bowl = new THREE.Mesh(new THREE.CylinderGeometry(20, 23, 7, 18, 1, true),
       lam({ color: 0xd9d2c4, side: THREE.DoubleSide }));
     bowl.position.y = 3.5; bowl.castShadow = true; g.add(bowl);
@@ -330,7 +340,8 @@ export function buildTown(scene, layout, store) {
 
   // Skyport Tower
   {
-    const g = new THREE.Group(); g.position.set(-115, 0, 100);
+    const L = landmarkPos('skyport');
+    const g = new THREE.Group(); g.position.set(L.x, 0, L.z);
     const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.6, 26, 8), lam({ color: 0xfffdf6 }));
     tower.position.y = 13; tower.castShadow = true; g.add(tower);
     g.add(box(9, 4, 9, '#ddebf7', 0, 28, 0));
@@ -345,27 +356,187 @@ export function buildTown(scene, layout, store) {
     tagPick(g, { kind: 'landmark', id: 'skyport' });
   }
 
-  // ---------- open plot signs + hit areas ----------
-  const openHits = [];
-  const openSigns = new THREE.Group();
-  for (const p of layout.plots.filter(pl => pl.open)) {
-    const sign = makeLabel('Open plot', { bg: '#bfe3b4', scale: 0.045, fontSize: 40 });
-    sign.position.set(p.x, 5.2, p.z);
-    sign.userData.plotId = p.id;
-    openSigns.add(sign);
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.4, 6), lam({ color: 0x8a5a44 }));
-    post.position.set(p.x, 1.7, p.z); post.castShadow = true;
-    post.userData.plotId = p.id;
-    openSigns.add(post);
-    const hit = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 7, 8),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
-    hit.position.set(p.x, 3, p.z);
-    hit.userData.pick = { kind: 'openplot', id: p.id };
-    openHits.push(hit);
-    scene.add(hit);
+  // Casino
+  {
+    const L = landmarkPos('casino');
+    const g = new THREE.Group(); g.position.set(L.x, 0, L.z);
+    g.add(box(16, 8, 12, '#6b4a8f', 0, 4, 0));
+    g.add(box(17.5, 1.2, 13.5, '#e8b04b', 0, 8.6, 0));
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(10, 3),
+      new THREE.MeshBasicMaterial({ color: 0xffd94d }));
+    sign.position.set(0, 6.5, 6.1); g.add(sign);
+    const signText = makeLabel('CASINO', { bg: '#ffd94d', scale: 0.05 });
+    signText.position.set(0, 6.5, 6.3); g.add(signText);
+    const label = makeLabel('Casino', { scale: 0.06 });
+    label.position.set(0, 14, 0); g.add(label);
+    scene.add(g);
+    tagPick(g, { kind: 'landmark', id: 'casino' });
   }
-  scene.add(openSigns);
-  pickables.push(...openHits, ...landmarkHits);
+
+  // Airport: runway strip + control tower
+  {
+    const L = landmarkPos('airport');
+    const g = new THREE.Group(); g.position.set(L.x, 0, L.z);
+    const strip = new THREE.Mesh(new THREE.PlaneGeometry(64, 9), lam({ color: 0x4a4f5a }));
+    strip.rotation.x = -Math.PI / 2; strip.position.y = 0.08; strip.receiveShadow = true; g.add(strip);
+    for (let i = -3; i <= 3; i++) {
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.8),
+        new THREE.MeshBasicMaterial({ color: 0xfffdf6 }));
+      dash.rotation.x = -Math.PI / 2; dash.position.set(i * 8.6, 0.14, 0); g.add(dash);
+    }
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.2, 13, 8), lam({ color: 0xfffdf6 }));
+    tower.position.set(-24, 6.5, 9); tower.castShadow = true; g.add(tower);
+    g.add(box(5.5, 2.6, 5.5, '#7ec8e3', -24, 14.3, 9));
+    const label = makeLabel('Airport', { scale: 0.06 });
+    label.position.set(0, 20, 0); g.add(label);
+    scene.add(g);
+    tagPick(g, { kind: 'landmark', id: 'airport' });
+  }
+
+  // ---------- Founder's mansion (always present, not join-gated) ----------
+  {
+    const p = mansionPlot;
+    const g = new THREE.Group(); g.position.set(p.x, 0, p.z);
+    // main 2-story block
+    g.add(box(13, 4.2, 9, '#fff6e9', 0, 2.1, 0));
+    g.add(box(10, 3.6, 7, '#fffdf6', 0, 6.0, -0.5));
+    const r1 = new THREE.Mesh(roofPrismGeometry(), lam({ color: 0xc05a43, flatShading: true }));
+    r1.scale.set(2.9, 1.3, 2.25); r1.position.y = 7.8; r1.castShadow = true; g.add(r1);
+    const r0 = new THREE.Mesh(roofPrismGeometry(), lam({ color: 0xc05a43, flatShading: true }));
+    r0.scale.set(2.2, 1.0, 1.7); r0.position.set(0, 4.2, 0); r0.castShadow = true; g.add(r0);
+    // side wing
+    g.add(box(6, 3.4, 6.5, '#f6e3d3', 9.2, 1.7, 0.6));
+    const rw = new THREE.Mesh(roofPrismGeometry(), lam({ color: 0x8a5a44, flatShading: true }));
+    rw.scale.set(1.35, 0.9, 1.55); rw.position.set(9.2, 3.4, 0.6); rw.castShadow = true; g.add(rw);
+    // terrace slab
+    g.add(box(11, 0.5, 4.5, '#e8dcc8', 0, 0.25, 6.8));
+    // warm glowing windows
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+    const win = (w, h, x, y, z) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), winMat);
+      m.position.set(x, y, z); g.add(m);
+    };
+    for (const wx of [-4.2, -1.4, 1.4, 4.2]) win(1.3, 1.5, wx, 2.4, 4.53);
+    for (const wx of [-3.2, 0, 3.2]) win(1.2, 1.3, wx, 6.0, 3.03);
+    win(1.2, 1.2, 9.2, 2.0, 3.88);
+    // door
+    g.add(box(1.8, 2.8, 0.3, '#2b3550', 0, 1.4, 4.55));
+    // garden: hedges + flower dots
+    const hedgeM = lam({ color: 0x5b9e5f, flatShading: true });
+    for (const [hx, hz, hw] of [[-7.5, 9.5, 3], [7.5, 9.5, 3], [-10.5, 4, 2.4], [10.5, 4, 2.4]]) {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(hw, 1.1, 1.1), hedgeM);
+      h.position.set(hx, 0.55, hz); h.castShadow = true; g.add(h);
+    }
+    const flowerCols = [0xe2725b, 0xe8b04b, 0x9b7ede, 0xfffdf6];
+    const spots = [[-7.5, 8.2], [-6.4, 10.6], [7.5, 8.2], [6.4, 10.6], [-10.5, 2.8], [10.5, 5.2]];
+    spots.forEach(([fx, fz], i) => {
+      const f = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 6),
+        lam({ color: flowerCols[i % flowerCols.length], flatShading: true }));
+      f.position.set(fx, 1.35, fz); f.castShadow = true; g.add(f);
+    });
+    // white picket fence around the plot
+    {
+      const postG = new THREE.BoxGeometry(0.22, 1.05, 0.22);
+      const postM = lam({ color: 0xfffdf6 });
+      const hw2 = 14, hd2 = 11;
+      const posts = [];
+      for (let x = -hw2; x <= hw2; x += 1.8) { posts.push([x, hd2]); posts.push([x, -hd2]); }
+      for (let z = -hd2 + 1.8; z <= hd2 - 1.8; z += 1.8) { posts.push([hw2, z]); posts.push([-hw2, z]); }
+      const fence = new THREE.InstancedMesh(postG, postM, posts.length);
+      const M = new THREE.Matrix4();
+      posts.forEach(([px, pz], i) => { M.makeTranslation(px, 0.52, pz); fence.setMatrixAt(i, M); });
+      fence.castShadow = true;
+      g.add(fence);
+    }
+    // flag pole + waving flag
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6.4, 8), lam({ color: 0x8a5a44 }));
+    pole.position.set(-9.5, 3.2, -6.5); pole.castShadow = true; g.add(pole);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.4),
+      new THREE.MeshLambertMaterial({ color: 0xe8b04b, side: THREE.DoubleSide }));
+    flag.position.set(-8.2, 5.6, -6.5); g.add(flag);
+    flags.push({ mesh: flag, phase: 1.3 });
+    // gold labels
+    const label = makeLabel('@hard8k.edt', { bg: '#e8b04b', scale: 0.062 });
+    label.position.set(0, 15.5, 0); g.add(label);
+    const sub = makeLabel("Founder's Mansion", { bg: '#fffdf6', scale: 0.045 });
+    sub.position.set(0, 12.6, 0); g.add(sub);
+    scene.add(g);
+    // generous invisible hit-box
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(30, 18, 26), hitMat);
+    hit.position.set(p.x, 6, p.z);
+    hit.userData.pick = { kind: 'house', plot: p };
+    scene.add(hit);
+    pickables.push(hit);
+    tagPick(g, { kind: 'house', plot: p });
+  }
+
+  // ---------- vacant plots: FOR RENT signs (instanced) + hit-boxes ----------
+  const vacant = layout.plots.filter(p => p.open);
+  const signTex = rentSignTexture();
+  const signByPlot = new Map();
+  {
+    const postG = new THREE.CylinderGeometry(0.14, 0.14, 3.2, 6); postG.translate(0, 1.6, 0);
+    const postM = lam({ color: 0x8a5a44 });
+    const posts = new THREE.InstancedMesh(postG, postM, vacant.length * 2);
+    const boardG = new THREE.PlaneGeometry(3.6, 1.8);
+    const boardM = new THREE.MeshLambertMaterial({ map: signTex });
+    const boards = new THREE.InstancedMesh(boardG, boardM, vacant.length);
+    const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(1, 1, 1), P = new THREE.Vector3();
+    const Y = new THREE.Vector3(0, 1, 0);
+    vacant.forEach((p, i) => {
+      Q.setFromAxisAngle(Y, p.rot);
+      // two posts
+      for (const [k, off] of [[0, -1.3], [1, 1.3]]) {
+        const ox = Math.cos(p.rot) * off, oz = -Math.sin(p.rot) * off;
+        M.compose(P.set(p.x + ox, 0, p.z + oz), Q, S);
+        posts.setMatrixAt(i * 2 + k, M);
+      }
+      // board
+      M.compose(P.set(p.x, 3.1, p.z), Q, S);
+      boards.setMatrixAt(i, M);
+      boards.setColorAt(i, dummyColor.set('#ffffff'));
+      signByPlot.set(p.id, { boardIdx: i, postIdx: i * 2 });
+    });
+    posts.castShadow = true;
+    boards.instanceMatrix.needsUpdate = true;
+    posts.instanceMatrix.needsUpdate = true;
+    scene.add(posts, boards);
+    // per-plot invisible hit cylinders (generous tap targets)
+    const hitG = new THREE.CylinderGeometry(6, 6, 9, 8);
+    for (const p of vacant) {
+      const hit = new THREE.Mesh(hitG, hitMat);
+      hit.position.set(p.x, 3.5, p.z);
+      hit.userData.pick = { kind: 'openplot', plot: p };
+      scene.add(hit);
+      pickables.push(hit);
+      p._hit = hit;
+    }
+    // hide a plot's sign+hit when claimed: scale its instances to 0
+    var hideVacantSign = (plotId, hide) => {
+      const s = signByPlot.get(plotId);
+      if (!s) return;
+      const Z = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
+      if (hide) {
+        boards.setMatrixAt(s.boardIdx, Z);
+        posts.setMatrixAt(s.postIdx, Z);
+        posts.setMatrixAt(s.postIdx + 1, Z);
+      } else {
+        const p = plotById.get(plotId);
+        const Q2 = new THREE.Quaternion().setFromAxisAngle(Y, p.rot);
+        for (const [k, off] of [[0, -1.3], [1, 1.3]]) {
+          const ox = Math.cos(p.rot) * off, oz = -Math.sin(p.rot) * off;
+          M.compose(P.set(p.x + ox, 0, p.z + oz), Q2, S.set(1, 1, 1));
+          posts.setMatrixAt(s.postIdx + k, M);
+        }
+        M.compose(P.set(p.x, 3.1, p.z), Q2, S.set(1, 1, 1));
+        boards.setMatrixAt(s.boardIdx, M);
+      }
+      boards.instanceMatrix.needsUpdate = true;
+      posts.instanceMatrix.needsUpdate = true;
+    };
+  }
+
+  pickables.push(...landmarkHits);
 
   // ---------- cars on the ring road ----------
   const cars = [];
@@ -377,7 +548,7 @@ export function buildTown(scene, layout, store) {
     const cab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.85, 1.5), lam({ color: 0x2b3550 }));
     cab.position.set(-0.2, 1.5, 0); cab.castShadow = true; g.add(cab);
     scene.add(g);
-    cars.push({ g, angle: (i / 6) * Math.PI * 2, speed: 0.055 + (i % 3) * 0.02, dir: i % 2 ? 1 : -1 });
+    cars.push({ g, t: (i / 6), speed: 0.016 + (i % 3) * 0.006, dir: i % 2 ? 1 : -1 });
   }
 
   // ---------- confetti bursts ----------
@@ -499,16 +670,15 @@ export function buildTown(scene, layout, store) {
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     }
-    // labels + visuals
+    // labels + visuals + generous hit-boxes
     clearGroup(claimLabels);
     clearGroup(claimVisuals);
-    flags.length = 0;
+    for (let i = claimHits.children.length - 1; i >= 0; i--) claimHits.remove(claimHits.children[i]);
+    flags.length = 1; // keep the mansion flag (index 0)
     const occupied = new Set(claims.map(c => c.plotId));
-    for (const ch of openSigns.children) {
-      if (ch.userData.plotId) ch.visible = !occupied.has(ch.userData.plotId);
-    }
-    for (const h of openHits) {
-      h.userData.disabled = occupied.has(h.userData.pick.id);
+    for (const p of vacant) {
+      hideVacantSign(p.id, occupied.has(p.id));
+      if (p._hit) p._hit.userData.disabled = occupied.has(p.id);
     }
     claims.forEach(claim => {
       const p = plotById.get(claim.plotId);
@@ -517,10 +687,14 @@ export function buildTown(scene, layout, store) {
       label.position.set(p.x, 8.6, p.z);
       claimLabels.add(label);
       buildClaimVisual(claim);
+      const hit = new THREE.Mesh(hitBoxGeo, hitMat);
+      hit.position.set(p.x, 4.5, p.z);
+      hit.userData.pick = { kind: 'house', plot: p };
+      claimHits.add(hit);
     });
   }
 
-  // ---------- picking ----------
+  // ---------- picking (generous invisible targets) ----------
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   function pick(clientX, clientY, camera, rect) {
@@ -530,24 +704,9 @@ export function buildTown(scene, layout, store) {
     for (const h of hits) {
       const o = h.object;
       if (o.userData.disabled) continue;
-      if (o.isInstancedMesh && o.userData.pickKind === 'house') {
-        const plot = housePlots[h.instanceId];
-        if (plot) return { kind: 'house', plot };
-        continue;
-      }
-      if (o.isInstancedMesh && o.userData.pickKind === 'claimed') {
-        const plotId = claimSlots[h.instanceId];
-        const plot = plotById.get(plotId);
-        if (plot) return { kind: 'house', plot, claimed: true };
-        continue;
-      }
       let n = o;
       while (n && !n.userData.pick) n = n.parent;
-      if (n && n.userData.pick) {
-        const pk = n.userData.pick;
-        if (pk.kind === 'openplot') return { kind: 'openplot', plot: plotById.get(pk.id) };
-        return pk;
-      }
+      if (n && n.userData.pick) return n.userData.pick;
     }
     return null;
   }
@@ -558,9 +717,11 @@ export function buildTown(scene, layout, store) {
     const dt = Math.min(clock.getDelta(), 0.05);
     const t = clock.elapsedTime;
     for (const car of cars) {
-      car.angle += car.speed * car.dir * dt;
-      car.g.position.set(Math.cos(car.angle) * 60, 0.1, Math.sin(car.angle) * 60);
-      car.g.rotation.y = -car.angle + (car.dir > 0 ? Math.PI / 2 : -Math.PI / 2) + Math.PI;
+      car.t = (car.t + car.dir * car.speed * dt + 1) % 1;
+      const q = ringPoint(car.t);
+      car.g.position.set(q.x, 0.1, q.z);
+      const hx = q.tx * car.dir, hz = q.tz * car.dir;
+      car.g.rotation.y = Math.atan2(-hz, hx);
     }
     if (fountain.water) fountain.water.rotation.z += dt * 0.8;
     if (fountain.top) {
@@ -600,11 +761,11 @@ export function buildTown(scene, layout, store) {
   refreshClaims();
 
   return {
-    plotById, housePlots, layout,
+    plotById, mansionPlot, layout,
     pick, burst, update, refreshClaims, setQuality,
     claimValue(plot, claim) {
       let v = plot.value;
-      const lines = [['Plot & build', plot.value]];
+      const lines = [[plot.mansion ? "Founder's estate" : 'Plot & build', plot.value]];
       if (claim) {
         for (const u of UPGRADE_DEFS) {
           if (claim.tier >= u.tier) { v += u.bonus; lines.push([u.name, '+' + u.bonus]); }
